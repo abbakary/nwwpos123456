@@ -78,12 +78,7 @@
       {% else %}
       <div class="alert alert-info mb-0">
         <i class="fa fa-info-circle me-2"></i>
-        No invoices found. 
-        {% if not order %}
-          <a href="{% url 'tracker:invoice_create' %}">Create one now</a>
-        {% else %}
-          <a href="{% url 'tracker:invoice_create_from_order' order_id=order.id %}">Create one now</a>
-        {% endif %}
+        No invoices found. <a href="{% url 'tracker:invoice_upload' %}">Upload an invoice now</a>
       </div>
       {% endif %}
     </div>
