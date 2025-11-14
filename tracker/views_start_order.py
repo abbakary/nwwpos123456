@@ -723,11 +723,12 @@ def api_update_order_from_extraction(request):
 @require_http_methods(["POST"])
 def api_create_order_from_modal(request):
     """
-    Create order from modal form submission.
+    Create order from modal form submission or invoice upload.
     Accepts form data with order type, customer type, and extracted details.
 
     Form fields:
       - order_type: 'service', 'sales', 'inquiry', or 'upload'
+      - customer_id: (optional) existing customer ID for pre-selected customer
       - customer_type: 'personal', 'company', 'government', 'ngo'
       - personal_subtype: 'owner' or 'driver' (for personal customers)
       - organization_name: (required for organizational customers)
@@ -742,65 +743,71 @@ def api_create_order_from_modal(request):
       - plate_number: vehicle plate (optional)
       - vehicle_make: vehicle make (optional)
       - vehicle_model: vehicle model (optional)
+      - subtotal: (for upload type) Net/Subtotal amount
+      - tax_amount: (for upload type) VAT/Tax amount
+      - total_amount: (for upload type) Gross/Total amount
     """
     try:
         user_branch = get_user_branch(request.user)
 
-        # Extract form data
-        order_type = request.POST.get('order_type', 'service').strip()
-        customer_type = request.POST.get('customer_type', 'personal').strip()
-        personal_subtype = request.POST.get('personal_subtype', '').strip()
-        organization_name = request.POST.get('organization_name', '').strip()
-        tax_number = request.POST.get('tax_number', '').strip()
-
-        customer_name = request.POST.get('customer_name', '').strip()
-        phone = request.POST.get('phone', '').strip()
-        email = request.POST.get('email', '').strip()
-        address = request.POST.get('address', '').strip()
-
-        description = request.POST.get('description', '').strip()
-        estimated_duration = request.POST.get('estimated_duration', '').strip()
-        priority = request.POST.get('priority', 'medium').strip()
-
-        plate_number = request.POST.get('plate_number', '').strip().upper()
-        vehicle_make = request.POST.get('vehicle_make', '').strip()
-        vehicle_model = request.POST.get('vehicle_model', '').strip()
-
-        # Validate required fields
-        if not customer_name or not phone:
-            return JsonResponse({
-                'success': False,
-                'error': 'Customer name and phone are required'
-            }, status=400)
-
-        if order_type not in ['service', 'sales', 'inquiry', 'upload']:
-            return JsonResponse({
-                'success': False,
-                'error': 'Invalid order type'
-            }, status=400)
-
-        if customer_type not in ['personal', 'company', 'government', 'ngo']:
-            return JsonResponse({
-                'success': False,
-                'error': 'Invalid customer type'
-            }, status=400)
-
-        # Validate customer type specific fields
-        if customer_type == 'personal' and not personal_subtype:
-            return JsonResponse({
-                'success': False,
-                'error': 'Personal subtype is required for personal customers'
-            }, status=400)
-
-        if customer_type in ['company', 'government', 'ngo']:
-            if not organization_name or not tax_number:
+        # Check if customer_id is provided (pre-selected customer from order creation page)
+        customer_id = request.POST.get('customer_id')
+        if customer_id:
+            # Use existing customer - do NOT create new one
+            try:
+                customer = Customer.objects.get(id=int(customer_id), branch=user_branch)
+            except (Customer.DoesNotExist, ValueError):
                 return JsonResponse({
                     'success': False,
-                    'error': 'Organization name and tax number are required'
+                    'error': 'Selected customer not found'
+                }, status=400)
+        else:
+            # Extract customer data from form
+            order_type = request.POST.get('order_type', 'service').strip()
+            customer_type = request.POST.get('customer_type', 'personal').strip()
+            personal_subtype = request.POST.get('personal_subtype', '').strip()
+            organization_name = request.POST.get('organization_name', '').strip()
+            tax_number = request.POST.get('tax_number', '').strip()
+
+            customer_name = request.POST.get('customer_name', '').strip()
+            phone = request.POST.get('phone', '').strip()
+            email = request.POST.get('email', '').strip()
+            address = request.POST.get('address', '').strip()
+
+            # Validate required fields
+            if not customer_name or not phone:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Customer name and phone are required'
                 }, status=400)
 
-        with transaction.atomic():
-            from .services import CustomerService, VehicleService
+            if order_type not in ['service', 'sales', 'inquiry', 'upload']:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Invalid order type'
+                }, status=400)
+
+            if customer_type not in ['personal', 'company', 'government', 'ngo']:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Invalid customer type'
+                }, status=400)
+
+            # Validate customer type specific fields
+            if customer_type == 'personal' and not personal_subtype:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Personal subtype is required for personal customers'
+                }, status=400)
+
+            if customer_type in ['company', 'government', 'ngo']:
+                if not organization_name or not tax_number:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Organization name and tax number are required'
+                    }, status=400)
+
+            from .services import CustomerService
 
             # Create or get customer
             if customer_type == 'personal':
@@ -824,6 +831,24 @@ def api_create_order_from_modal(request):
                     email=email or None,
                     address=address or None,
                 )
+
+        # Extract order details
+        order_type = request.POST.get('order_type', 'service').strip()
+        description = request.POST.get('description', '').strip()
+        estimated_duration = request.POST.get('estimated_duration', '').strip()
+        priority = request.POST.get('priority', 'medium').strip()
+
+        plate_number = request.POST.get('plate_number', '').strip().upper()
+        vehicle_make = request.POST.get('vehicle_make', '').strip()
+        vehicle_model = request.POST.get('vehicle_model', '').strip()
+
+        # For upload type, extract invoice amounts
+        subtotal = request.POST.get('subtotal', '0').strip()
+        tax_amount = request.POST.get('tax_amount', '0').strip()
+        total_amount = request.POST.get('total_amount', '0').strip()
+
+        with transaction.atomic():
+            from .services import VehicleService
 
             # Create or get vehicle if plate is provided
             vehicle = None
@@ -849,10 +874,48 @@ def api_create_order_from_modal(request):
                 type=order_type,
                 status='created',
                 started_at=timezone.now(),
-                description=description or f"Order for {customer_name}",
+                description=description or f"Order for {customer.full_name}",
                 priority=priority if priority in ['low', 'medium', 'high', 'urgent'] else 'medium',
                 estimated_duration=est_duration,
             )
+
+            # For upload type, create an invoice with extracted data
+            if order_type == 'upload':
+                from decimal import Decimal
+                try:
+                    subtotal_val = Decimal(str(subtotal or '0').replace(',', ''))
+                    tax_val = Decimal(str(tax_amount or '0').replace(',', ''))
+                    total_val = Decimal(str(total_amount or '0').replace(',', ''))
+
+                    # Create invoice linked to this order
+                    invoice = Invoice.objects.create(
+                        branch=user_branch,
+                        order=order,
+                        customer=customer,
+                        vehicle=vehicle,
+                        invoice_date=timezone.localdate(),
+                        subtotal=subtotal_val,
+                        tax_amount=tax_val,
+                        total_amount=total_val or (subtotal_val + tax_val),
+                        created_by=request.user
+                    )
+                    invoice.generate_invoice_number()
+                    invoice.save()
+
+                    # If description contains item details, create line items
+                    if description:
+                        from .models import InvoiceLineItem
+                        lines = description.split('\n')
+                        for line in lines:
+                            if line.strip():
+                                InvoiceLineItem.objects.create(
+                                    invoice=invoice,
+                                    description=line.strip(),
+                                    quantity=1,
+                                    unit_price=Decimal('0')
+                                )
+                except Exception as e:
+                    logger.warning(f"Failed to create invoice from upload: {e}")
 
         # Return success response
         return JsonResponse({
@@ -860,7 +923,7 @@ def api_create_order_from_modal(request):
             'message': 'Order created successfully',
             'order_id': order.id,
             'order_number': order.order_number,
-            'redirect_url': f'/tracker/orders/{order.id}/'
+            'redirect_url': f'/tracker/orders/started/{order.id}/'
         }, status=201)
 
     except Exception as e:

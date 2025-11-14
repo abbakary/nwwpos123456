@@ -1797,27 +1797,34 @@ def start_order(request: HttpRequest):
 
 @login_required
 def create_order_for_customer(request: HttpRequest, pk: int):
-    """Create a new order for a specific customer"""
+    """Create a new order for a specific customer.
+    This endpoint receives a customer ID and creates an order for that customer.
+    It prevents duplicate customer creation by enforcing the customer relationship.
+    """
     from .utils import adjust_inventory
     customers_qs = scope_queryset(Customer.objects.all(), request.user, request)
     c = get_object_or_404(customers_qs, pk=pk)
+
     if request.method == "POST":
         form = OrderForm(request.POST)
-        # Ensure vehicle belongs to this customer
+        # Ensure vehicle belongs to this customer ONLY
         form.fields["vehicle"].queryset = c.vehicles.all()
+
         if form.is_valid():
             o = form.save(commit=False)
+            # CRITICAL: Always bind order to the pre-selected customer
+            # This prevents accidental customer duplication
             o.customer = c
             o.branch = get_user_branch(request.user)
             o.status = "created"
-            
+
             # Handle vehicle creation if new vehicle info is provided
             if not o.vehicle:
                 plate_number = request.POST.get("plate_number", "").strip()
                 make = request.POST.get("make", "").strip()
                 model = request.POST.get("model", "").strip()
                 vehicle_type = request.POST.get("vehicle_type", "").strip()
-                
+
                 # Create vehicle if any vehicle information is provided
                 if plate_number or make or model or vehicle_type:
                     v = Vehicle.objects.create(
@@ -1828,7 +1835,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                         vehicle_type=vehicle_type or None
                     )
                     o.vehicle = v
-            
+
             # Handle service selections for service orders
             if o.type == 'service':
                 service_selection = request.POST.getlist('service_selection')
@@ -1841,7 +1848,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                     else:
                         desc = desc_services
                     o.description = desc
-                    
+
                     # Update estimated duration based on selected services if not already set
                     if not o.estimated_duration or o.estimated_duration == 50:
                         try:
@@ -1851,7 +1858,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                             o.estimated_duration = total_minutes or 50
                         except Exception:
                             pass
-            
+
             # Handle tire services for sales orders
             elif o.type == 'sales':
                 tire_services = request.POST.getlist('tire_services')
@@ -1864,7 +1871,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                     else:
                         desc = desc_services
                     o.description = desc
-                    
+
                     # Update estimated duration based on selected tire services
                     try:
                         from .models import ServiceAddon
@@ -1875,7 +1882,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                         o.estimated_duration = current_duration + total_minutes
                     except Exception:
                         pass
-            
+
             # Inventory check for sales
             if o.type == 'sales':
                 name = (o.item_name or '').strip()
@@ -1890,6 +1897,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                     messages.error(request, f'Only {available} in stock for {name} ({brand})')
                     return render(request, "tracker/order_create.html", {"customer": c, "form": form})
             o.save()
+
             # Update customer visit/arrival status for returning tracking
             try:
                 now_ts = timezone.now()
@@ -1900,6 +1908,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
                 c.save(update_fields=['arrival_time','current_status','last_visit','total_visits'])
             except Exception:
                 pass
+
             # Deduct inventory after save
             if o.type == 'sales':
                 qty_int = int(o.quantity or 0)
@@ -1916,6 +1925,7 @@ def create_order_for_customer(request: HttpRequest, pk: int):
     else:
         form = OrderForm()
         form.fields["vehicle"].queryset = c.vehicles.all()
+
     # Dynamic service types and add-ons for order form
     try:
         from .models import ServiceType, ServiceAddon
@@ -1932,7 +1942,13 @@ def create_order_for_customer(request: HttpRequest, pk: int):
     except Exception:
         service_types = []
         sales_addons = []
-    return render(request, "tracker/order_create.html", {"customer": c, "form": form, "service_types": service_types, "sales_addons": sales_addons})
+
+    return render(request, "tracker/order_create.html", {
+        "customer": c,
+        "form": form,
+        "service_types": service_types,
+        "sales_addons": sales_addons
+    })
 
 
 @login_required
