@@ -54,19 +54,12 @@
             {% endif %}
 
             {% if not registration_summary_only %}
-            {# Service Description and Duration #}
-            <div class="col-md-8">
+            {# Service Description #}
+            <div class="col-12">
                 <label class="form-label">{{ form.description.label }}</label>
                 {{ form.description }}
                 {% if form.description.errors %}
                 <div class="text-danger f-12">{{ form.description.errors|striptags }}</div>
-                {% endif %}
-            </div>
-            <div class="col-md-4">
-                <label class="form-label">{{ form.estimated_duration.label }}</label>
-                {{ form.estimated_duration }}
-                {% if form.estimated_duration.errors %}
-                <div class="text-danger f-12">{{ form.estimated_duration.errors|striptags }}</div>
                 {% endif %}
             </div>
             {% endif %}
