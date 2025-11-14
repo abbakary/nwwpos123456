@@ -1031,7 +1031,7 @@
 {% endif %}
 
 <!-- Attachments Upload Modal -->
-{% if order.status != 'completed' and order.status != 'cancelled' and order.type != 'inquiry' %}
+{% if order.type != 'inquiry' %}
 <div class="modal fade" id="attachmentModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
@@ -1045,7 +1045,7 @@
           <div class="mb-2">
             <label class="form-label fw-medium">Select one or more files</label>
             <input type="file" class="form-control" name="attachments" id="attachmentsInput" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip">
-            <small class="text-muted">Uploading attachments will not complete the order.</small>
+            <small class="text-muted">Upload supporting documents, photos, receipts, or other files related to this order.</small>
           </div>
         </div>
         <div class="modal-footer">
