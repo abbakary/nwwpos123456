@@ -1282,14 +1282,9 @@
                 updateSubtypeVisibility();
               }
 
-              // ===== Order Type Selection and Service/Addon Loading =====
-              const orderTypeOptions = safeQuerySelectorAll('.order-type-option');
-              const serviceOrderSection = document.getElementById('serviceOrderSection');
-              const salesOrderSection = document.getElementById('salesOrderSection');
+              // ===== Service/Addon Loading (No Order Type Dependency) =====
               const serviceTypesContainer = document.getElementById('serviceTypesContainer');
-              const addonTypesContainer = document.getElementById('addonTypesContainer');
               const serviceEtaHint = document.getElementById('serviceEtaHint');
-              const addonEtaHint = document.getElementById('addonEtaHint');
 
               let serviceTypes = [];
               let addons = [];
@@ -1303,16 +1298,17 @@
                   const data = await response.json();
                   serviceTypes = data.service_types || [];
                   addons = data.service_addons || [];
-                  renderServiceCheckboxes();
-                  renderAddonCheckboxes();
+                  renderAllCheckboxes();
                 } catch (err){
                   console.error('Error loading service data:', err);
                 }
               }
 
-              function renderServiceCheckboxes(){
+              function renderAllCheckboxes(){
                 if (!serviceTypesContainer) return;
                 serviceTypesContainer.innerHTML = '';
+
+                // Render services
                 serviceTypes.forEach((svc, idx) => {
                   const col = document.createElement('div');
                   col.className = 'col-md-6 col-lg-4';
@@ -1329,34 +1325,38 @@
                   `;
                   serviceTypesContainer.appendChild(col);
                 });
-                updateServiceEta();
-              }
 
-              function renderAddonCheckboxes(){
-                if (!addonTypesContainer) return;
-                addonTypesContainer.innerHTML = '';
-                addons.forEach((addon, idx) => {
-                  const col = document.createElement('div');
-                  col.className = 'col-md-6 col-lg-4';
-                  col.innerHTML = `
-                    <div class="addon-checkbox-card">
-                      <input class="form-check-input addon-checkbox" type="checkbox" id="addon_chk_${idx}" name="tire_services_chk" value="${addon.name}" data-minutes="${addon.estimated_minutes}">
-                      <label class="addon-checkbox-label" for="addon_chk_${idx}">
-                        <div class="addon-checkbox-content">
-                          <div class="addon-checkbox-name">${addon.name}</div>
-                          <div class="addon-checkbox-duration"><i class="fa fa-clock-o me-1"></i>${addon.estimated_minutes} mins</div>
-                        </div>
-                      </label>
-                    </div>
-                  `;
-                  addonTypesContainer.appendChild(col);
-                });
-                updateAddonEta();
+                // Render addons
+                if (addons.length > 0) {
+                  const hr = document.createElement('div');
+                  hr.className = 'col-12 mt-2';
+                  hr.innerHTML = '<hr>';
+                  serviceTypesContainer.appendChild(hr);
+
+                  addons.forEach((addon, idx) => {
+                    const col = document.createElement('div');
+                    col.className = 'col-md-6 col-lg-4';
+                    col.innerHTML = `
+                      <div class="addon-checkbox-card">
+                        <input class="form-check-input addon-checkbox" type="checkbox" id="addon_chk_${idx}" name="service_selection_chk" value="${addon.name}" data-minutes="${addon.estimated_minutes}">
+                        <label class="addon-checkbox-label" for="addon_chk_${idx}">
+                          <div class="addon-checkbox-content">
+                            <div class="addon-checkbox-name">${addon.name}</div>
+                            <div class="addon-checkbox-duration"><i class="fa fa-clock-o me-1"></i>${addon.estimated_minutes} mins</div>
+                          </div>
+                        </label>
+                      </div>
+                    `;
+                    serviceTypesContainer.appendChild(col);
+                  });
+                }
+
+                updateServiceEta();
               }
 
               function updateServiceEta(){
                 if (!serviceTypesContainer) return;
-                const checked = safeQuerySelectorAll('.service-checkbox:checked', serviceTypesContainer);
+                const checked = safeQuerySelectorAll('input[name="service_selection_chk"]:checked', serviceTypesContainer);
                 let totalMinutes = 0;
                 checked.forEach(chk => {
                   totalMinutes += parseInt(chk.dataset.minutes || 0);
@@ -1376,52 +1376,13 @@
                 }
               }
 
-              function updateAddonEta(){
-                if (!addonTypesContainer) return;
-                const checked = safeQuerySelectorAll('.addon-checkbox:checked', addonTypesContainer);
-                let totalMinutes = 0;
-                checked.forEach(chk => {
-                  totalMinutes += parseInt(chk.dataset.minutes || 0);
-                });
-                const addonSelection = Array.from(checked).map(c => c.value).join(',');
-                const serviceSelInput = document.getElementById('serviceSelection');
-                const estimatedDurInput = document.getElementById('estimatedDuration');
-                if (serviceSelInput) serviceSelInput.value = addonSelection;
-                if (estimatedDurInput) estimatedDurInput.value = totalMinutes;
-                if (addonEtaHint){
-                  if (totalMinutes > 0){
-                    addonEtaHint.textContent = `Estimated duration: ${totalMinutes} minutes`;
-                    addonEtaHint.style.display = 'block';
-                  } else {
-                    addonEtaHint.style.display = 'none';
-                  }
-                }
-              }
-
-              if (orderTypeOptions && orderTypeOptions.length > 0){
-                orderTypeOptions.forEach(option => {
-                  option.addEventListener('change', function(){
-                    if (this.value === 'service'){
-                      if (serviceOrderSection) serviceOrderSection.style.display = 'block';
-                      if (salesOrderSection) salesOrderSection.style.display = 'none';
-                    } else {
-                      if (serviceOrderSection) serviceOrderSection.style.display = 'none';
-                      if (salesOrderSection) salesOrderSection.style.display = 'block';
-                    }
-                  });
-                });
-              }
-
               // Attach listeners to service/addon checkboxes
               if (serviceTypesContainer){
                 serviceTypesContainer.addEventListener('change', updateServiceEta);
               }
-              if (addonTypesContainer){
-                addonTypesContainer.addEventListener('change', updateAddonEta);
-              }
 
               // Load service data on modal open
-              if (serviceTypesContainer || addonTypesContainer){
+              if (serviceTypesContainer){
                 loadServiceData();
               }
 
