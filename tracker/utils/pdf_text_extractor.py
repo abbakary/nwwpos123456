@@ -844,7 +844,7 @@ def parse_invoice_data(text: str) -> dict:
             kind_attention = None
 
     # Extract line items with improved row-based detection
-    # Uses Sr No (serial number) to detect and group item rows
+    # More flexible approach: handles both Sr No format and table-like formats
     items = []
     item_section_started = False
     item_header_idx = -1
@@ -862,39 +862,47 @@ def parse_invoice_data(text: str) -> dict:
         # Detect item section header - line with multiple item-related keywords
         keyword_count = sum([
             1 if re.search(r'\b(?:Sr|S\.N|Serial|No\.?)\b', line_stripped, re.I) else 0,
-            1 if re.search(r'\b(?:Item|Code)\b', line_stripped, re.I) else 0,
+            1 if re.search(r'\b(?:Item|Code|Product)\b', line_stripped, re.I) else 0,
             1 if re.search(r'\b(?:Description|Desc)\b', line_stripped, re.I) else 0,
-            1 if re.search(r'\b(?:Qty|Quantity|Type)\b', line_stripped, re.I) else 0,
-            1 if re.search(r'\b(?:Rate|Price|Value|Amount)\b', line_stripped, re.I) else 0,
+            1 if re.search(r'\b(?:Qty|Quantity|Type|Units?)\b', line_stripped, re.I) else 0,
+            1 if re.search(r'\b(?:Rate|Price|Value|Amount|Unit\s*Price)\b', line_stripped, re.I) else 0,
         ])
 
         if keyword_count >= 3:
             item_section_started = True
             item_header_idx = list_idx
+            logger.info(f"Item section header detected at index {list_idx}: {line_stripped}")
             continue
 
         # Stop at totals/summary section
         if item_section_started and list_idx > item_header_idx + 1:
             if re.search(r'(?:Net\s*Value|Gross\s*Value|Grand\s*Total|Total\s*:|Payment|Delivery|Remarks|NOTE)', line_stripped, re.I):
+                logger.info(f"Item section ended at: {line_stripped}")
                 break
 
         # Parse item lines (after header starts)
         if item_section_started and list_idx > item_header_idx:
-            # Detect Sr No - must be at the very start (1, 2, 3, etc.)
-            sr_no_match = re.match(r'^(\d{1,3})\s+', line_stripped)
-            if not sr_no_match:
-                # This line doesn't start with Sr No, skip it or treat as continuation
-                continue
-
-            sr_no_value = int(sr_no_match.group(1))
-            if sr_no_value > 999:  # Sr No should be small
-                continue
-
             try:
-                # Remove Sr No from the line for further processing
-                line_after_sr = re.sub(r'^\d{1,3}\s+', '', line_stripped).strip()
+                # Strategy 1: Line starts with Sr No (1, 2, 3, etc.)
+                sr_no_match = re.match(r'^(\d{1,3})\s+', line_stripped)
+                has_sr_no = sr_no_match is not None
 
-                # Extract all numbers from the line (after Sr No removed)
+                if has_sr_no:
+                    sr_no_value = int(sr_no_match.group(1))
+                    if sr_no_value > 999:  # Sr No should be small
+                        continue
+                    line_after_sr = re.sub(r'^\d{1,3}\s+', '', line_stripped).strip()
+                else:
+                    # Strategy 2: No Sr No, treat entire line as item (flexible format)
+                    line_after_sr = line_stripped
+
+                # Skip lines that are clearly labels or too short
+                if len(line_after_sr) < 3:
+                    continue
+                if re.match(r'^(?:Sr|Code|Item|Description|Qty|Rate|Value|Unit|Amount|Price|Type)', line_after_sr, re.I):
+                    continue
+
+                # Extract all numbers from the line
                 all_numbers = re.findall(r'[0-9\,]+\.?\d*', line_stripped)
                 float_numbers = []
                 for n in all_numbers:
@@ -907,14 +915,18 @@ def parse_invoice_data(text: str) -> dict:
 
                 # Skip Sr No from numbers if it's the first number
                 numbers_for_parsing = float_numbers
-                if float_numbers and float_numbers[0] == sr_no_value:
+                if has_sr_no and float_numbers and float_numbers[0] == sr_no_value:
                     numbers_for_parsing = float_numbers[1:]
 
+                # Need at least one number for it to be an item line
+                if not numbers_for_parsing:
+                    continue
+
                 # Detect unit/type indicators (PCS, NOS, UNT, HR, KG, etc.)
-                unit_match = re.search(r'\b(NOS|PCS|KG|HR|LTR|PIECES?|UNITS?|BOX|CASE|SETS?|PC|KIT|UNT)\b', line_stripped, re.I)
+                unit_match = re.search(r'\b(NOS|PCS|KG|HR|LTR|PIECES?|UNITS?|BOX|CASE|SETS?|PC|KIT|UNT|KTS|BAG|BUNDLE|PACK|CYLINDER|LITRE|TYRE|TIRE|TL|LT)\b', line_stripped, re.I)
                 unit_value = unit_match.group(1).upper() if unit_match else None
 
-                # Extract item code - first 3-10 digit sequence after Sr No
+                # Extract item code - first 3-10 digit sequence
                 # Item codes: 2132004135, 3373119002, 21004, 21019
                 item_code = None
                 description_text = line_after_sr
@@ -933,7 +945,7 @@ def parse_invoice_data(text: str) -> dict:
                 # Find where description ends
                 for i, word in enumerate(words):
                     # Stop at unit keywords (PCS, UNT, etc.)
-                    if re.match(r'^(PCS|NOS|KG|HR|LTR|PIECES|UNITS?|KIT|BOX|CASE|SETS?|PC|UNT)$', word, re.I):
+                    if re.match(r'^(PCS|NOS|KG|HR|LTR|PIECES|UNITS?|KIT|BOX|CASE|SETS?|PC|UNT|KTS|BAG|BUNDLE|PACK|CYLINDER|LITRE|TYRE|TIRE|TL|LT)$', word, re.I):
                         desc_end_idx = i
                         break
                     # Stop at large numbers (amounts typically have commas or many digits)
@@ -979,9 +991,6 @@ def parse_invoice_data(text: str) -> dict:
                 }
 
                 # Parse numeric values (qty, rate, value)
-                if not numbers_for_parsing:
-                    continue
-
                 max_num = max(numbers_for_parsing) if numbers_for_parsing else 0
 
                 if len(numbers_for_parsing) == 1:
@@ -1022,6 +1031,7 @@ def parse_invoice_data(text: str) -> dict:
                 # Only add if we have meaningful data
                 if item.get('description') and (item.get('value') or item.get('qty', 1) > 0):
                     items.append(item)
+                    logger.info(f"Item extracted: {full_description}, qty={item['qty']}, value={item['value']}")
 
             except Exception as e:
                 logger.warning(f"Error parsing item line: {line_stripped}, {e}")
