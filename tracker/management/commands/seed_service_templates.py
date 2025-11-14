@@ -71,7 +71,6 @@ class Command(BaseCommand):
                 name=template_data['name'],
                 defaults={
                     'keywords': template_data['keywords'],
-                    'estimated_minutes': template_data['estimated_minutes'],
                     'service_type': template_data['service_type'],
                     'is_common': template_data['is_common'],
                     'is_active': True,
