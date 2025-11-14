@@ -18,22 +18,22 @@ User = get_user_model()
 def create_service_types():
     """Create sample service types"""
     service_types_data = [
-        {"name": "Oil Change", "estimated_minutes": 30},
-        {"name": "Brake Service", "estimated_minutes": 60},
-        {"name": "Tire Rotation", "estimated_minutes": 45},
-        {"name": "Engine Tune-up", "estimated_minutes": 90},
-        {"name": "Transmission Service", "estimated_minutes": 120},
-        {"name": "Battery Replacement", "estimated_minutes": 20},
-        {"name": "Air Filter Change", "estimated_minutes": 15},
-        {"name": "Wheel Alignment", "estimated_minutes": 75},
-        {"name": "Suspension Repair", "estimated_minutes": 100},
-        {"name": "Exhaust System Repair", "estimated_minutes": 80},
-        {"name": "Radiator Flush", "estimated_minutes": 50},
-        {"name": "AC Service", "estimated_minutes": 70},
-        {"name": "Spark Plug Replacement", "estimated_minutes": 40},
-        {"name": "Brake Pad Replacement", "estimated_minutes": 35},
-        {"name": "Coolant Replacement", "estimated_minutes": 45},
-        {"name": "Power Steering Fluid", "estimated_minutes": 30},
+        {"name": "Oil Change"},
+        {"name": "Brake Service"},
+        {"name": "Tire Rotation"},
+        {"name": "Engine Tune-up"},
+        {"name": "Transmission Service"},
+        {"name": "Battery Replacement"},
+        {"name": "Air Filter Change"},
+        {"name": "Wheel Alignment"},
+        {"name": "Suspension Repair"},
+        {"name": "Exhaust System Repair"},
+        {"name": "Radiator Flush"},
+        {"name": "AC Service"},
+        {"name": "Spark Plug Replacement"},
+        {"name": "Brake Pad Replacement"},
+        {"name": "Coolant Replacement"},
+        {"name": "Power Steering Fluid"},
     ]
     
     service_types = []
