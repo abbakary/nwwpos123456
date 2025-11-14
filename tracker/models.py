@@ -197,6 +197,25 @@ class Order(models.Model):
     def __str__(self):
         return f"{self.order_number} - {self.customer.full_name}"
 
+    def calculate_estimated_duration(self):
+        """Calculate estimated duration in minutes based on started_at and completed_at."""
+        if not self.started_at or not self.completed_at:
+            return None
+        from .utils.time_utils import calculate_estimated_duration
+        return calculate_estimated_duration(self.started_at, self.completed_at)
+
+    def get_overdue_status(self):
+        """Get overdue status with working hours elapsed."""
+        from .utils.time_utils import get_order_overdue_status
+        return get_order_overdue_status(self)
+
+    def is_overdue(self):
+        """Check if order is overdue (9+ working hours in progress)."""
+        if self.status != 'in_progress' or not self.started_at:
+            return False
+        from .utils.time_utils import is_order_overdue
+        return is_order_overdue(self.started_at)
+
     def auto_progress_if_elapsed(self):
         """Automatically move created -> in_progress after 10 minutes."""
         if self.status == 'created' and (timezone.now() - self.created_at) >= timedelta(minutes=10):
