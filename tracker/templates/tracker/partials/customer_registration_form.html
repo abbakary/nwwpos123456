@@ -231,11 +231,10 @@
                     {% for ad in sales_addons %}
                     <div class="col-md-6 col-lg-4">
                       <div class="addon-checkbox-card">
-                        <input class="form-check-input tire-service-checkbox" type="checkbox" id="oc_ts_{{ forloop.counter }}" name="tire_services" value="{{ ad.name }}" data-minutes="{{ ad.estimated_minutes }}">
+                        <input class="form-check-input tire-service-checkbox" type="checkbox" id="oc_ts_{{ forloop.counter }}" name="tire_services" value="{{ ad.name }}">
                         <label class="addon-checkbox-label" for="oc_ts_{{ forloop.counter }}">
                           <div class="addon-checkbox-content">
                             <div class="addon-checkbox-name">{{ ad.name }}</div>
-                            <div class="addon-checkbox-duration"><i class="fa fa-clock-o me-1"></i>{{ ad.estimated_minutes }} mins</div>
                           </div>
                         </label>
                       </div>
