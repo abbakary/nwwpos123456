@@ -342,25 +342,25 @@
             inp1.name = 'item_description[]';
             inp1.value = item.description || '';
             form.appendChild(inp1);
-            
+
             const inp2 = document.createElement('input');
             inp2.type = 'hidden';
             inp2.name = 'item_qty[]';
             inp2.value = item.qty || '1';
             form.appendChild(inp2);
-            
+
             const inp3 = document.createElement('input');
             inp3.type = 'hidden';
             inp3.name = 'item_price[]';
-            inp3.value = item.value || '0';
+            inp3.value = (item.rate || item.value) || '0';
             form.appendChild(inp3);
-            
+
             const inp4 = document.createElement('input');
             inp4.type = 'hidden';
             inp4.name = 'item_code[]';
             inp4.value = item.code || '';
             form.appendChild(inp4);
-            
+
             const inp5 = document.createElement('input');
             inp5.type = 'hidden';
             inp5.name = 'item_unit[]';
