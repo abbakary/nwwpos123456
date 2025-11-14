@@ -78,13 +78,12 @@ def create_service_addons():
         addon, created = ServiceAddon.objects.get_or_create(
             name=addon_data["name"],
             defaults={
-                "estimated_minutes": addon_data["estimated_minutes"],
                 "is_active": True
             }
         )
         service_addons.append(addon)
         if created:
-            print(f"✓ Created service addon: {addon.name} ({addon.estimated_minutes} mins)")
+            print(f"✓ Created service addon: {addon.name}")
         else:
             print(f"• Service addon already exists: {addon.name}")
     
