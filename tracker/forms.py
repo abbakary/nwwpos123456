@@ -513,11 +513,7 @@ class OrderForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Default estimated duration for service orders
-        if not self.fields["estimated_duration"].initial:
-            self.fields["estimated_duration"].initial = 50
-
-        # Dynamic service types from DB, attach durations mapping for front-end
+        # Dynamic service types from DB
         try:
             svc_qs = ServiceType.objects.filter(is_active=True).order_by('name')
             svc_choices = [(s.name, s.name) for s in svc_qs]
