@@ -185,13 +185,7 @@ def create_sample_data():
             if order_type == 'service':
                 order_data.update({
                     'description': f"{random.choice(service_types)} for {vehicle.make if vehicle else 'vehicle'}",
-                    'estimated_duration': random.randint(60, 480),  # 1-8 hours in minutes
                 })
-                if status == 'completed':
-                    order_data['actual_duration'] = random.randint(
-                        int(order_data['estimated_duration'] * 0.8),
-                        int(order_data['estimated_duration'] * 1.2)
-                    )
             
             elif order_type == 'sales':
                 item = random.choice(inventory_items)
