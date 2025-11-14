@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 @login_required
 @require_http_methods(["GET"])
+def invoice_upload(request):
+    """Display invoice upload page"""
+    return render(request, 'tracker/invoice_upload.html', {})
+
+
+@login_required
+@require_http_methods(["GET"])
 def api_search_started_orders(request):
     """
     API endpoint to search for started orders by vehicle plate number.
