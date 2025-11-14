@@ -562,8 +562,17 @@ def parse_invoice_data(text: str) -> dict:
                     # Remove leading/trailing non-alphanumeric except for +, -, /, spaces, ()
                     phone_candidate = re.sub(r'^[^\w\+\-\(]|[^\w\)]$', '', phone_candidate).strip()
 
-                    # Accept if it has digits or is long enough to be a phone
-                    if re.search(r'\d', phone_candidate) and len(phone_candidate) > 2:
+                    # Filter out product codes and specs that might be on the same line
+                    # Exclude if it matches product patterns like "LT265/65R17 116/113S TL"
+                    if re.search(r'^(?:LT|TR)\d+', phone_candidate, re.I):
+                        # This looks like a tire spec, not a phone
+                        continue
+
+                    # Count the number of digits - a phone should have at least 7 digits
+                    digit_count = len(re.findall(r'\d', phone_candidate))
+
+                    # Accept if it has at least 7 digits and contains phone separators
+                    if digit_count >= 7 and ('+' in phone_candidate or '-' in phone_candidate or '/' in phone_candidate or ' ' in phone_candidate):
                         phone = phone_candidate
                         break
 
