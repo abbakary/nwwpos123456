@@ -1,0 +1,358 @@
+{% extends 'tracker/base.html' %}
+{% load static %}
+
+{% block title %}Create Invoice from Upload{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="page-title">
+    <div class="row">
+      <div class="col-6"><h4>Create Invoice from Upload</h4></div>
+      <div class="col-6">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item"><a href="{% url 'tracker:dashboard' %}">Dashboard</a></li>
+          <li class="breadcrumb-item active">Create Invoice</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-md-8 offset-md-2">
+      <div class="card">
+        <div class="card-header bg-light">
+          <h6 class="mb-0"><i class="fa fa-file-upload me-2"></i>Upload Invoice</h6>
+        </div>
+        <div class="card-body">
+          <div class="alert alert-info mb-3">
+            <i class="fa fa-info-circle me-2"></i>
+            <strong>Upload an invoice:</strong> Select a PDF or image file of your invoice. The system will automatically extract the data and create an invoice record.
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Select invoice file (PDF or image)</label>
+            <input type="file" id="invoiceFileInput" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp">
+            <small class="text-muted d-block mt-1">Supported formats: PDF, JPG, PNG, GIF, WebP (max 50MB)</small>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="button" id="uploadExtractBtn" class="btn btn-primary">
+              <i class="fa fa-upload me-2"></i>Upload & Extract
+            </button>
+            <a href="{% url 'tracker:invoice_list' %}" class="btn btn-light">Cancel</a>
+            <div id="uploadProgress" class="progress ms-auto" style="width:200px; display:none">
+              <div class="progress-bar" role="progressbar" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div id="uploadError" class="text-danger mt-3" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Extraction Review Modal -->
+      <div class="modal fade" id="extractionReviewModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Extraction Preview</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <div id="extractedHeader" class="mb-3"></div>
+              <div id="extractedRaw" class="mt-3 small text-muted"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" id="applyExtractionBtn" class="btn btn-outline-primary">Apply to Form</button>
+              <button type="button" id="createFromExtractionBtn" class="btn btn-primary">Create Invoice from Extraction</button>
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Information Box -->
+      <div class="card mt-3">
+        <div class="card-body">
+          <div class="alert alert-info mb-0">
+            <i class="fa fa-info-circle me-2"></i>
+            <strong>How it works:</strong>
+            <ol class="mb-0 mt-2">
+              <li>Upload your invoice (PDF or image file)</li>
+              <li>The system will automatically extract customer, items, and totals</li>
+              <li>Review the extracted data and confirm</li>
+              <li>The invoice will be created and linked to the appropriate order</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function(){
+    const fileInput = document.getElementById('invoiceFileInput');
+    const uploadBtn = document.getElementById('uploadExtractBtn');
+    const progressWrap = document.getElementById('uploadProgress');
+    const progressBar = progressWrap ? progressWrap.querySelector('.progress-bar') : null;
+    const errorBox = document.getElementById('uploadError');
+    const reviewModalEl = document.getElementById('extractionReviewModal');
+    const reviewModal = reviewModalEl && typeof bootstrap !== 'undefined' ? new bootstrap.Modal(reviewModalEl) : null;
+    const extractedHeader = document.getElementById('extractedHeader');
+    const extractedRaw = document.getElementById('extractedRaw');
+    const applyBtn = document.getElementById('applyExtractionBtn');
+    const createBtn = document.getElementById('createFromExtractionBtn');
+
+    function getCSRF(){
+      const name = 'csrftoken=';
+      const parts = document.cookie.split(';');
+      for (let i=0;i<parts.length;i++){ const c = parts[i].trim(); if (c.indexOf(name)===0) return c.substring(name.length); }
+      return '';
+    }
+
+    function setProgress(p){ 
+      if(progressBar){ progressBar.style.width = Math.max(0, Math.min(100, p)) + '%'; } 
+      if(progressWrap){ progressWrap.style.display = p>0 && p<100 ? 'block' : (p>=100? 'block':'none'); } 
+    }
+
+    if (uploadBtn){
+      uploadBtn.addEventListener('click', async function(){
+        if (!fileInput || !fileInput.files || !fileInput.files[0]){
+          errorBox.style.display='block';
+          errorBox.innerHTML='<i class="fa fa-warning me-2"></i>Please select a file to upload.';
+          errorBox.className = 'alert alert-warning mt-3';
+          return;
+        }
+
+        const file = fileInput.files[0];
+        if (file.size > 50 * 1024 * 1024) {
+          errorBox.style.display='block';
+          errorBox.innerHTML='<i class="fa fa-warning me-2"></i>File is too large. Maximum size is 50MB.';
+          errorBox.className = 'alert alert-warning mt-3';
+          return;
+        }
+
+        errorBox.style.display='none';
+        const fd = new FormData();
+        fd.append('file', file);
+
+        setProgress(5);
+        uploadBtn.disabled = true;
+        const originalBtnText = uploadBtn.innerHTML;
+        uploadBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-2"></i>Extracting...';
+
+        try {
+          const r = await fetch('{% url "tracker:api_extract_invoice_preview" %}', {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': getCSRF() }
+          });
+
+          setProgress(100);
+
+          if (!r.ok) {
+            throw new Error(`Server error: ${r.status} ${r.statusText}`);
+          }
+
+          let data;
+          try {
+            data = await r.json();
+          } catch(jsonErr) {
+            throw new Error('Invalid response format from server');
+          }
+
+          if (!data) {
+            throw new Error('Empty response from server');
+          }
+
+          if (data.success === true){
+            const d = data;
+            const hdr = d.header || {};
+            const invoiceNo = hdr.invoice_no || hdr.code_no || 'N/A';
+            const date = hdr.date || 'N/A';
+            const customer = hdr.customer_name || 'N/A';
+            const phone = hdr.phone || '';
+            const email = hdr.email || '';
+            const address = hdr.address || '';
+            const subtotal = hdr.subtotal ? parseFloat(hdr.subtotal).toLocaleString('en-US', {minimumFractionDigits: 2}) : '0.00';
+            const tax = hdr.tax ? parseFloat(hdr.tax).toLocaleString('en-US', {minimumFractionDigits: 2}) : '0.00';
+            const total = hdr.total ? parseFloat(hdr.total).toLocaleString('en-US', {minimumFractionDigits: 2}) : '0.00';
+            const reference = hdr.reference || '';
+            const attendedBy = hdr.attended_by || '';
+            const kindAttention = hdr.kind_attention || '';
+            const paymentMethod = hdr.payment_method || '';
+            const deliveryTerms = hdr.delivery_terms || '';
+
+            let sellerInfo = '';
+            if (hdr.seller_name) {
+              sellerInfo += `<div class="mb-3"><strong>Seller / Supplier</strong></div>`;
+              sellerInfo += `<div class="row mb-2"><div class="col-12"><strong>${hdr.seller_name}</strong></div></div>`;
+              if (hdr.seller_address) sellerInfo += `<div class="row mb-2"><div class="col-12">${hdr.seller_address}</div></div>`;
+              if (hdr.seller_phone) sellerInfo += `<div class="row mb-2"><div class="col-12"><strong>Phone:</strong> ${hdr.seller_phone}</div></div>`;
+              if (hdr.seller_email) sellerInfo += `<div class="row mb-2"><div class="col-12"><strong>Email:</strong> ${hdr.seller_email}</div></div>`;
+              if (hdr.seller_tax_id) sellerInfo += `<div class="row mb-2"><div class="col-12"><strong>Tax ID:</strong> ${hdr.seller_tax_id}</div></div>`;
+              if (hdr.seller_vat_reg) sellerInfo += `<div class="row mb-2"><div class="col-12"><strong>VAT Reg:</strong> ${hdr.seller_vat_reg}</div></div>`;
+              sellerInfo += '<hr/>';
+            }
+
+            let headerHtml = sellerInfo + `<div class=\"mb-3\"><strong>Invoice Summary</strong></div>
+              <div class=\"invoice-preview-box mb-3\">
+                <div class=\"invoice-preview-row\"><span>Net Value (TSH):</span><span>${subtotal} TSH</span></div>
+                <div class=\"invoice-preview-row\"><span>VAT${hdr.tax_rate ? ' (' + (typeof hdr.tax_rate === 'string' ? hdr.tax_rate : hdr.tax_rate.toFixed(2)) + '%)' : ''}:</span><span>${tax} TSH</span></div>
+                <div class=\"invoice-preview-row\" style=\"font-weight:800; border-top:1px solid #e6e6e6; padding-top:8px\"><span>Gross Value (TSH):</span><span>${total} TSH</span></div>
+              </div>
+              <div class=\"mb-3\"><strong>Invoice Information</strong></div>
+              <div class=\"row mb-2\">
+                <div class=\"col-md-6\"><strong>Invoice No:</strong> ${invoiceNo}</div>
+                <div class=\"col-md-6\"><strong>Date:</strong> ${date}</div>
+              </div>
+              <div class=\"row mb-2\">
+                <div class=\"col-md-6\"><strong>Reference:</strong> ${reference || 'N/A'}</div>
+                <div class=\"col-md-6\"><strong>Payment Method:</strong> ${paymentMethod || 'N/A'}</div>
+              </div>
+              <div class=\"row mb-3\">
+                <div class=\"col-12\"><strong>Delivery Terms:</strong> ${deliveryTerms || 'N/A'}</div>
+              </div>
+              <div class=\"mb-3\"><strong>Customer Information</strong></div>
+              <div class=\"row mb-2\">
+                <div class=\"col-md-6\"><strong>Name:</strong> ${customer}</div>
+              </div>
+              ${phone ? '<div class=\"row mb-2\"><div class=\"col-12\"><strong>Phone:</strong> ' + phone + '</div></div>' : ''}
+              ${email ? '<div class=\"row mb-2\"><div class=\"col-12\"><strong>Email:</strong> ' + email + '</div></div>' : ''}
+              ${address ? '<div class=\"row mb-3\"><div class=\"col-12\"><strong>Address:</strong> ' + address + '</div></div>' : ''}
+              ${attendedBy ? '<div class=\"row mb-2\"><div class=\"col-12\"><strong>Attended By:</strong> ' + attendedBy + '</div></div>' : ''}
+              ${kindAttention ? '<div class=\"row mb-3\"><div class=\"col-12\"><strong>Kind Attention:</strong> ' + kindAttention + '</div></div>' : ''}`;
+
+            if (extractedHeader) extractedHeader.innerHTML = headerHtml;
+            if (extractedRaw) extractedRaw.textContent = d.raw_text ? d.raw_text.substring(0,2000) : '';
+            window.__lastInvoiceExtraction = d;
+            if (reviewModal) {
+              reviewModal.show();
+            } else {
+              errorBox.style.display='block';
+              errorBox.innerHTML = '<i class="fa fa-info-circle me-2"></i>Extraction complete. Please review the data.';
+              errorBox.className = 'alert alert-info mt-3';
+            }
+          } else {
+            errorBox.style.display='block';
+            const msgText = data.message || 'Could not extract invoice data. Please check the file format and try again.';
+            errorBox.innerHTML = '<i class="fa fa-exclamation-circle me-2"></i>' + msgText;
+            errorBox.className = 'alert alert-warning mt-3';
+          }
+        } catch(err){
+          setProgress(0);
+          errorBox.style.display='block';
+          const errMsg = (err && err.message) ? err.message : String(err);
+          errorBox.innerHTML = '<i class="fa fa-exclamation-triangle me-2"></i>Upload error: ' + errMsg;
+          errorBox.className = 'alert alert-danger mt-3';
+          console.error('Upload extraction error:', err);
+        } finally {
+          uploadBtn.disabled = false;
+          uploadBtn.innerHTML = originalBtnText;
+          setProgress(0);
+        }
+      });
+    }
+
+    if (createBtn){
+      createBtn.addEventListener('click', function(){
+        const d = window.__lastInvoiceExtraction || {};
+        if (!d || !d.header) {
+          alert('No extraction data available. Please try uploading again.');
+          return;
+        }
+        if (reviewModal) reviewModal.hide();
+        
+        const hdr = d.header;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '{% url "tracker:api_create_invoice_from_upload" %}';
+        
+        function addField(name, value){
+          const inp = document.createElement('input');
+          inp.type = 'hidden';
+          inp.name = name;
+          inp.value = value || '';
+          form.appendChild(inp);
+        }
+        
+        addField('csrfmiddlewaretoken', getCSRF());
+        addField('customer_name', hdr.customer_name || '');
+        addField('customer_phone', hdr.phone || '');
+        addField('customer_email', hdr.email || '');
+        addField('customer_address', hdr.address || '');
+        addField('customer_type', 'personal');
+        addField('invoice_number', hdr.invoice_no || hdr.code_no || '');
+        addField('invoice_date', hdr.date || '');
+        addField('subtotal', hdr.subtotal || '0');
+        addField('tax_amount', hdr.tax || '0');
+        addField('total_amount', hdr.total || '0');
+        addField('notes', hdr.remarks || '');
+        addField('attended_by', hdr.attended_by || '');
+        addField('kind_attention', hdr.kind_attention || '');
+        addField('payment_method', hdr.payment_method || '');
+        addField('delivery_terms', hdr.delivery_terms || '');
+        
+        if (d.items && Array.isArray(d.items)){
+          d.items.forEach(item => {
+            const inp1 = document.createElement('input');
+            inp1.type = 'hidden';
+            inp1.name = 'item_description[]';
+            inp1.value = item.description || '';
+            form.appendChild(inp1);
+            
+            const inp2 = document.createElement('input');
+            inp2.type = 'hidden';
+            inp2.name = 'item_qty[]';
+            inp2.value = item.qty || '1';
+            form.appendChild(inp2);
+            
+            const inp3 = document.createElement('input');
+            inp3.type = 'hidden';
+            inp3.name = 'item_price[]';
+            inp3.value = item.value || '0';
+            form.appendChild(inp3);
+            
+            const inp4 = document.createElement('input');
+            inp4.type = 'hidden';
+            inp4.name = 'item_code[]';
+            inp4.value = item.code || '';
+            form.appendChild(inp4);
+            
+            const inp5 = document.createElement('input');
+            inp5.type = 'hidden';
+            inp5.name = 'item_unit[]';
+            inp5.value = item.unit || '';
+            form.appendChild(inp5);
+          });
+        }
+        
+        document.body.appendChild(form);
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<i class="fa fa-spinner fa-spin me-2"></i>Creating invoice...';
+        form.submit();
+      });
+    }
+  });
+</script>
+
+<style>
+  .invoice-preview-box { 
+    border: 1px solid #e6e6e6; 
+    padding: 12px; 
+    border-radius: 6px; 
+    background: #f8f9fb; 
+  }
+  .invoice-preview-row { 
+    display: flex; 
+    justify-content: space-between; 
+    padding: 6px 0; 
+    font-size: 14px;
+  }
+  .invoice-preview-row strong { 
+    font-weight: 700;
+  }
+</style>
+{% endblock %}

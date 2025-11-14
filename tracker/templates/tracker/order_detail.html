@@ -508,7 +508,7 @@
             <div class="d-flex justify-content-between align-items-center">
               <div class="text-muted"><i class="fa fa-info-circle me-2"></i>No invoice linked to this order.</div>
               <div class="btn-group btn-group-sm">
-                <a href="{% url 'tracker:invoice_create_from_order' order_id=order.id %}" class="btn btn-primary"><i class="fa fa-plus me-1"></i>Create / Upload Invoice</a>
+                <a href="{% url 'tracker:invoice_upload' %}" class="btn btn-primary"><i class="fa fa-file-upload me-1"></i>Upload Invoice</a>
               </div>
             </div>
           {% endif %}

@@ -16,11 +16,18 @@ from django.views.decorators.http import require_http_methods
 from django.db import transaction
 
 from .models import Invoice, InvoiceLineItem, InvoicePayment, Order, Customer, Vehicle, InventoryItem
-from .forms import InvoiceForm, InvoiceLineItemForm, InvoicePaymentForm
+from .forms import InvoiceLineItemForm, InvoicePaymentForm
 from .utils import get_user_branch
 from .services import OrderService, CustomerService, VehicleService
 
 logger = logging.getLogger(__name__)
+
+
+@login_required
+@require_http_methods(["GET"])
+def invoice_upload(request):
+    """Display invoice upload page"""
+    return render(request, 'tracker/invoice_upload.html', {})
 
 
 @login_required
@@ -552,251 +559,16 @@ def api_upload_extract_invoice(request):
         })
 
 
-@login_required
-def invoice_create(request, order_id=None):
-    """Create a new invoice, optionally linked to an existing started order"""
-    from .services import CustomerService, VehicleService, OrderService
-
-    order = None
-    customer = None
-    vehicle = None
-    started_orders = []
-    plate_search = request.GET.get('plate', '').strip().upper()
-
-    user_branch = get_user_branch(request.user)
-
-    # If searching by plate, find all started orders for that plate
-    if plate_search:
-        started_orders = OrderService.find_all_started_orders_for_plate(user_branch, plate_search)
-
-    # If order_id is provided, load that order
-    if order_id:
-        order = get_object_or_404(Order, pk=order_id, branch=user_branch)
-        customer = order.customer
-        vehicle = order.vehicle
-        # Mark it so we know it's a linked started order
-        plate_search = vehicle.plate_number if vehicle else ''
-
-    # If customer_id is provided (from customer detail page), load that customer
-    customer_id = request.GET.get('customer_id')
-    if customer_id and not customer:
-        try:
-            customer = Customer.objects.get(pk=customer_id, branch=user_branch)
-        except Customer.DoesNotExist:
-            customer = None
-
-    if request.method == 'POST':
-        try:
-            form = InvoiceForm(request.POST, user=request.user)
-        except TypeError:
-            # Fallback for older code / forms that don't accept user kwarg
-            form = InvoiceForm(request.POST)
-        if form.is_valid():
-            cd = form.cleaned_data
-
-            # Check if user selected a started order to link to
-            selected_order_id = cd.get('selected_order_id') or request.POST.get('selected_order_id')
-            if selected_order_id and not order:
-                try:
-                    order = Order.objects.get(id=selected_order_id, branch=user_branch, status='created')
-                except Order.DoesNotExist:
-                    messages.error(request, 'Selected started order not found.')
-                    return render(request, 'tracker/invoice_create.html', {
-                        'form': form,
-                        'order': order,
-                        'customer': customer,
-                        'vehicle': vehicle,
-                        'started_orders': started_orders,
-                        'plate_search': plate_search,
-                    })
-
-            # Resolve or create customer
-            customer_obj = None
-            try:
-                # If we already have a pre-selected customer (from customer detail page), use it
-                if customer:
-                    customer_obj = customer
-                elif cd.get('existing_customer'):
-                    customer_obj = cd.get('existing_customer')
-                else:
-                    name = (cd.get('customer_name') or '').strip()
-                    phone = (cd.get('customer_phone') or '').strip()
-
-                    if name and phone:
-                        branch = user_branch
-                        try:
-                            customer_obj, _ = CustomerService.create_or_get_customer(
-                                branch=branch,
-                                full_name=name,
-                                phone=phone,
-                                whatsapp=(cd.get('customer_whatsapp') or '').strip() or None,
-                                email=(cd.get('customer_email') or '').strip() or None,
-                                address=(cd.get('customer_address') or '').strip() or None,
-                                organization_name=(cd.get('customer_organization_name') or '').strip() or None,
-                                tax_number=(cd.get('customer_tax_number') or '').strip() or None,
-                                customer_type=cd.get('customer_type') or None,
-                                personal_subtype=cd.get('customer_personal_subtype') or None,
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to create/get customer while creating invoice: {e}")
-                            customer_obj = None
-            except Exception as e:
-                logger.warning(f"Failed to resolve or create customer while creating invoice: {e}")
-
-            # Fallback to provided customer from order if none resolved
-            if not customer_obj:
-                customer_obj = customer
-
-            # If no order was linked and we have a customer, create a new order for this invoice
-            # But only if this is not a temporary customer
-            if not order and customer_obj:
-                # Check if this is a temporary customer
-                is_temp_customer = (hasattr(customer_obj, 'full_name') and str(customer_obj.full_name).startswith('Plate ')) and \
-                                   (hasattr(customer_obj, 'phone') and str(customer_obj.phone).startswith('PLATE_'))
-                
-                if not is_temp_customer:
-                    # Get vehicle if available
-                    vehicle_plate = request.POST.get('reference')
-                    if vehicle_plate:
-                        try:
-                            vehicle = VehicleService.create_or_get_vehicle(
-                                customer=customer_obj,
-                                plate_number=vehicle_plate,
-                                make='',
-                                model='',
-                                vehicle_type=''
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to create/get vehicle while creating invoice: {e}")
-                            vehicle = None
-                    else:
-                        vehicle = None
-                    
-                    # Create a new order for this customer
-                    try:
-                        order_type = request.POST.get('order_type_fixed') or request.POST.get('order_type') or 'service'
-                        order = OrderService.create_order(
-                            customer=customer_obj,
-                            order_type=order_type,
-                            branch=user_branch,
-                            vehicle=vehicle,
-                            description=request.POST.get('order_description', ''),
-                            estimated_duration=request.POST.get('estimated_duration')
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to create order while creating invoice: {e}")
-                        order = None
-
-            # Enforce one invoice per order
-            if order:
-                try:
-                    existing_inv = Invoice.objects.filter(order=order).first()
-                except Exception:
-                    existing_inv = None
-                if existing_inv:
-                    messages.info(request, f'Invoice {existing_inv.invoice_number} already exists for this order.')
-                    return redirect('tracker:invoice_detail', pk=existing_inv.pk)
-
-            invoice = form.save(commit=False)
-            invoice.branch = user_branch
-            if order:
-                invoice.order = order
-            invoice.customer = customer_obj
-            invoice.vehicle = vehicle
-            invoice.created_by = request.user
-            invoice.generate_invoice_number()
-            # Ensure Terms & Conditions (NOTE) is prefilled if missing
-            try:
-                if not getattr(invoice, 'terms', None):
-                    invoice.terms = (
-                        "NOTE 1 : Payment in TSHS accepted at the prevailing rate on the date of payment. "
-                        "2 : Proforma Invoice is Valid for 2 weeks from date of Proforma. "
-                        "3 : Discount is Valid only for the above Quantity. "
-                        "4 : Duty and VAT exemption documents to be submitted with the Purchase Order."
-                    )
-            except Exception:
-                pass
-            invoice.save()
-
-            # If this invoice was created from a started order, update the order with finalized details
-            try:
-                if order:
-                    # Use the new OrderService to update the started order with invoice details
-                    order = OrderService.update_order_from_invoice(
-                        order=order,
-                        customer=customer_obj,
-                        vehicle=vehicle,
-                        description=request.POST.get('order_description') or order.description
-                    )
-
-                    # Also handle service selection/ETA if provided
-                    sel = request.POST.get('service_selection')
-                    est = request.POST.get('estimated_duration')
-                    if sel or est:
-                        if sel:
-                            try:
-                                names = json.loads(sel)
-                            except Exception:
-                                names = [s.strip() for s in str(sel).split(',') if s.strip()]
-                            if names:
-                                base_desc = order.description or ''
-                                svc_text = ', '.join(names)
-                                lines = [l for l in base_desc.split('\n') if not (l.strip().lower().startswith('services:') or l.strip().lower().startswith('add-ons:') or l.strip().lower().startswith('tire services:'))]
-                                if order.type == 'sales':
-                                    lines.append(f"Tire Services: {svc_text}")
-                                else:
-                                    lines.append(f"Services: {svc_text}")
-                                order.description = '\n'.join([l for l in lines if l.strip()])
-                        if est:
-                            try:
-                                order.estimated_duration = int(est)
-                            except Exception:
-                                pass
-                        order.save()
-            except Exception as e:
-                logger.warning(f"Failed to update order with invoice details: {e}")
-
-            messages.success(request, f'Invoice {invoice.invoice_number} created successfully.')
-            return redirect('tracker:invoice_detail', pk=invoice.pk)
-    else:
-        initial = {}
-        if order:
-            # Auto-fill reference with vehicle plate if available, fallback to order.order_number
-            if vehicle and getattr(vehicle, 'plate_number', None):
-                initial['reference'] = vehicle.plate_number
-            else:
-                initial['reference'] = order.order_number
-        # If we have a customer from URL parameter, pre-fill customer fields
-        elif customer:
-            initial['customer_name'] = customer.full_name
-            initial['customer_phone'] = customer.phone
-            initial['customer_email'] = customer.email or ''
-            initial['customer_address'] = customer.address or ''
-            initial['customer_organization_name'] = customer.organization_name or ''
-            initial['customer_tax_number'] = customer.tax_number or ''
-            initial['customer_type'] = customer.customer_type or ''
-            initial['customer_personal_subtype'] = customer.personal_subtype or ''
-        try:
-            form = InvoiceForm(user=request.user, initial=initial)
-        except TypeError:
-            form = InvoiceForm(initial=initial)
-
-    return render(request, 'tracker/invoice_create.html', {
-        'form': form,
-        'order': order,
-        'customer': customer,
-        'vehicle': vehicle,
-    })
 
 
 @login_required
 def invoice_detail(request, pk):
     """View invoice details and manage line items/payments"""
     invoice = get_object_or_404(Invoice, pk=pk)
-    
+
     if request.method == 'POST':
         action = request.POST.get('action')
-        
+
         if action == 'add_line_item':
             form = InvoiceLineItemForm(request.POST)
             if form.is_valid():
@@ -805,7 +577,7 @@ def invoice_detail(request, pk):
                 line_item.save()
                 messages.success(request, 'Line item added.')
                 return redirect('tracker:invoice_detail', pk=invoice.pk)
-        
+
         elif action == 'delete_line_item':
             item_id = request.POST.get('item_id')
             try:
@@ -816,7 +588,7 @@ def invoice_detail(request, pk):
             except InvoiceLineItem.DoesNotExist:
                 messages.error(request, 'Line item not found.')
             return redirect('tracker:invoice_detail', pk=invoice.pk)
-        
+
         elif action == 'update_payment':
             form = InvoicePaymentForm(request.POST)
             if form.is_valid():
@@ -825,23 +597,14 @@ def invoice_detail(request, pk):
                 payment.save()
                 messages.success(request, 'Payment information updated.')
                 return redirect('tracker:invoice_detail', pk=invoice.pk)
-        
-        elif action == 'update_invoice':
-            form = InvoiceForm(request.POST, instance=invoice)
-            if form.is_valid():
-                form.save()
-                messages.success(request, 'Invoice updated.')
-                return redirect('tracker:invoice_detail', pk=invoice.pk)
-    
+
     line_item_form = InvoiceLineItemForm()
     payment_form = InvoicePaymentForm()
-    invoice_form = InvoiceForm(instance=invoice)
-    
+
     return render(request, 'tracker/invoice_detail.html', {
         'invoice': invoice,
         'line_item_form': line_item_form,
         'payment_form': payment_form,
-        'invoice_form': invoice_form,
     })
 
 

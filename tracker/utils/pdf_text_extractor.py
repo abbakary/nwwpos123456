@@ -911,47 +911,70 @@ def parse_invoice_data(text: str) -> dict:
 
             if is_likely_item_row and not is_continuation_only:
                 try:
-                    # Extract item code - typically appears as the first numeric field after Sr No
-                    item_code = None
-                    description_text = line_stripped
+                    # Improved Sr No detection - line typically starts with 1, 2, 3, 4, etc.
+                    sr_no_match = re.match(r'^(\d{1,3})\s+', line_stripped)
+                    has_sr_no = sr_no_match is not None
+                    sr_no_value = int(sr_no_match.group(1)) if sr_no_match else None
 
+                    # For parsing, remove Sr No if present
+                    line_for_parsing = line_stripped
+                    numbers_for_parsing = float_numbers
+
+                    if has_sr_no and sr_no_value and sr_no_value < 1000:
+                        # Remove Sr No from start
+                        line_for_parsing = re.sub(r'^\d{1,3}\s+', '', line_stripped).strip()
+                        # Also remove Sr No from float_numbers if it matches
+                        if float_numbers and float_numbers[0] == sr_no_value:
+                            numbers_for_parsing = float_numbers[1:]
+
+                    # Extract item code - typically appears as first substantial number after Sr No
                     # Item codes can be 3-10 digits (examples: 21004, 21019, 2132004135, 3373119002)
-                    # They typically appear after the Sr No and before the description
-                    code_match = re.search(r'^[\s\d]*\s+(\d{3,10})\s+', line_stripped)
+                    item_code = None
+                    description_text = line_for_parsing
+
+                    # Look for 3-10 digit code at/near beginning (after Sr No removed)
+                    code_match = re.search(r'^(\d{3,10})\s+', line_for_parsing)
                     if code_match:
                         item_code = code_match.group(1)
-                        # Remove the Sr No and code from description for cleaner extraction
-                        description_text = re.sub(r'^\s*\d+\s+\d{3,10}\s+', '', line_stripped).strip()
+                        # Remove the code from description
+                        description_text = re.sub(r'^\d{3,10}\s+', '', line_for_parsing).strip()
                     else:
-                        # Fallback: find first numeric value that looks like a code
-                        # This handles cases where spacing is different
-                        first_code_match = re.search(r'\b(\d{3,10})\b', line_stripped)
-                        if first_code_match:
-                            item_code = first_code_match.group(1)
+                        # Fallback: find first multi-digit code looking number
+                        # Prefer longer codes (more likely to be item code than quantity)
+                        code_candidates = re.findall(r'\b(\d{3,10})\b', line_for_parsing)
+                        if code_candidates:
+                            # Use the first substantial one (not the very beginning if that's a small Sr No)
+                            item_code = code_candidates[0]
 
                     # Extract description (text portion, typically before large numeric values like rates/amounts)
-                    # Look for the last sequence of letters/words before significant numbers
                     full_description = ''
                     words = description_text.split()
+                    desc_end_idx = len(words)
+
+                    # Find where description ends (at first large number or unit indicator)
                     for i, word in enumerate(words):
                         # Stop when we hit a large number (amounts typically > 1000 or have comma/decimal)
-                        if re.match(r'^\d+[\,\.]\d+', word) or (len(word) > 8 and re.match(r'^\d+', word)):
+                        if re.match(r'^\d+[\,\.]\d+', word) or (len(word) > 8 and re.match(r'^\d{4,}', word)):
                             # Stop here - everything before is description
-                            full_description = ' '.join(words[:i]).strip()
+                            desc_end_idx = i
                             break
                         # Also check for unit keywords which typically come after description
                         elif re.match(r'^(PCS|NOS|KG|HR|LTR|PIECES|UNITS|KIT|BOX|CASE|SETS|PC|UNT)$', word, re.I):
                             # Unit found - description is everything before
-                            full_description = ' '.join(words[:i]).strip()
+                            desc_end_idx = i
                             break
 
-                    # If we didn't find a stopping point, use all words with letters
-                    if not full_description:
-                        desc_words = [w for w in words if re.search(r'[A-Za-z]', w)]
+                    # Extract description
+                    full_description = ' '.join(words[:desc_end_idx]).strip()
+
+                    # If no clear stop found and we have many words, limit reasonably
+                    if not full_description or len(full_description) < 2:
+                        # Use first meaningful words up to a limit
+                        desc_words = [w for w in words[:20] if re.search(r'[A-Za-z]', w)]
                         if desc_words:
-                            full_description = ' '.join(desc_words[:min(10, len(desc_words))]).strip()
-                        else:
-                            full_description = words[0] if words else ''
+                            full_description = ' '.join(desc_words[:15]).strip()
+                        elif words:
+                            full_description = words[0]
 
                     # Clean up description
                     full_description = re.sub(r'\s+', ' ', full_description).strip()
@@ -961,7 +984,7 @@ def parse_invoice_data(text: str) -> dict:
                     if not full_description or len(full_description) < 2:
                         continue
 
-                    # Parse quantities and amounts from the extracted numbers
+                    # Parse quantities and amounts from the extracted numbers (Sr No already removed)
                     item = {
                         'description': full_description,
                         'qty': 1,
@@ -972,35 +995,44 @@ def parse_invoice_data(text: str) -> dict:
                     }
 
                     # Parse numeric values based on count and patterns
-                    max_num = max(float_numbers) if float_numbers else 0
+                    if not numbers_for_parsing:
+                        continue
 
-                    if len(float_numbers) == 1:
-                        # Single number: the value
-                        item['value'] = to_decimal(str(float_numbers[0]))
-                    elif len(float_numbers) == 2:
+                    max_num = max(numbers_for_parsing) if numbers_for_parsing else 0
+                    min_num = min(numbers_for_parsing) if numbers_for_parsing else 0
+
+                    if len(numbers_for_parsing) == 1:
+                        # Single number: the value/amount
+                        item['value'] = to_decimal(str(numbers_for_parsing[0]))
+                    elif len(numbers_for_parsing) == 2:
                         # Two numbers: likely qty and value
-                        if float_numbers[0] < 100 and float_numbers[0] == int(float_numbers[0]):
-                            item['qty'] = int(float_numbers[0])
-                            item['value'] = to_decimal(str(float_numbers[1]))
-                        elif float_numbers[1] < 100 and float_numbers[1] == int(float_numbers[1]):
-                            item['qty'] = int(float_numbers[1])
-                            item['value'] = to_decimal(str(float_numbers[0]))
+                        if numbers_for_parsing[0] < 100 and numbers_for_parsing[0] == int(numbers_for_parsing[0]):
+                            # First is qty
+                            item['qty'] = int(numbers_for_parsing[0])
+                            item['value'] = to_decimal(str(numbers_for_parsing[1]))
+                        elif numbers_for_parsing[1] < 100 and numbers_for_parsing[1] == int(numbers_for_parsing[1]):
+                            # Second is qty
+                            item['qty'] = int(numbers_for_parsing[1])
+                            item['value'] = to_decimal(str(numbers_for_parsing[0]))
                         else:
-                            # Neither obvious, largest is value
+                            # Neither clear, assume largest is value
                             item['value'] = to_decimal(str(max_num))
-                    elif len(float_numbers) >= 3:
-                        # Multiple numbers: typically Sr#, Code, Qty, Rate, Value
+                    elif len(numbers_for_parsing) >= 3:
+                        # Multiple numbers: typically Code, Qty, Rate, Value
+                        # Largest is almost always value/amount
                         item['value'] = to_decimal(str(max_num))
 
-                        # Find quantity: small integer less than 100
+                        # Find quantity: small integer (typically 1-1000, usually < 100)
                         qty_candidate = None
-                        for fn in float_numbers:
-                            if fn == int(fn) and 0 < fn < 100 and fn != max_num:
-                                qty_candidate = int(fn)
-                                break
+                        for fn in numbers_for_parsing:
+                            if fn == int(fn) and 0 < fn < 1000 and fn != max_num:
+                                # Prefer smaller candidates (likely qty, not rate/value)
+                                if qty_candidate is None or fn < qty_candidate:
+                                    qty_candidate = int(fn)
 
                         if qty_candidate:
                             item['qty'] = qty_candidate
+                            # Calculate rate if we have qty
                             if qty_candidate > 0 and max_num > 0:
                                 item['rate'] = to_decimal(str(max_num / qty_candidate))
 

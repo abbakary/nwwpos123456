@@ -467,8 +467,8 @@
                     {% endif %}
                     {% else %}
                     <li>
-                      <a class="dropdown-item" href="{% url 'tracker:invoice_create_from_order' order_id=o.id %}">
-                        <i class="fa fa-plus me-2 text-primary"></i>Create / Upload Invoice
+                      <a class="dropdown-item" href="{% url 'tracker:invoice_upload' %}">
+                        <i class="fa fa-file-upload me-2 text-primary"></i>Upload Invoice
                       </a>
                     </li>
                     {% endif %}

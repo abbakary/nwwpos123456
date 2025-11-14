@@ -154,10 +154,8 @@ urlpatterns = [
     path("api/orders/started/kpis/", views_start_order.api_started_orders_kpis, name="api_started_orders_kpis"),
 
 
-    # Invoices
-    path("invoices/create/", views_invoice.invoice_create, name="invoice_create"),
-    path("invoices/create/<int:order_id>/", views_invoice.invoice_create, name="invoice_create_from_order"),
-    path("api/invoices/search-started-orders/", views_invoice.api_search_started_orders, name="api_search_started_orders"),
+    # Invoices - Upload only
+    path("invoices/upload/", views_invoice.invoice_upload, name="invoice_upload"),
     path("api/invoices/upload-extract/", views_invoice.api_upload_extract_invoice, name="api_upload_extract_invoice"),
 
     # Invoice upload (two-step process)
